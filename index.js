@@ -7,56 +7,48 @@ import dotenv from "dotenv";
 
 dotenv.config();
 const mongoClient = new MongoClient(process.env.MONGO_URI);
-let db
-
-const promise = mongoClient.connect()
-promise.then(() => db = mongoClient.db("batepapouol"));
-promise.catch((e) => console.log(chalk.bold.red("Não foi possível acessar a database", e)));
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
-app.post("/participants", (req, res) => { //Trocar para o formato que o diego mostrou na aula hj
+app.post("/participants", async (req, res) => { //Validação com JOI do nome do usuario. Não pode ser uma string vazia e também não pode ser igual a de um nome ja existente no banco de dados!
   const {name} = req.body;
 
-  //Validação com JOI do nome do usuario. Não pode ser uma string vazia e também não pode ser igual a de um nome ja existente no banco de dados!
+  try{
+    await mongoClient.connect();
+    const dbUol = mongoClient.db("batepapouol");
+    const usersCollection = dbUol.collection("users");
+    await usersCollection.insertOne({name: name, lastStatus: Date.now()});
+    const messagesCollection = dbUol.collection("messages");
+    await messagesCollection.insertOne({from:name, to:'Todos', text: 'entra na sala...', type: 'status', time:dayjs().format('HH:mm:ss')});
 
-  const promise = db.collection("users").insertOne({name: name, lastStatus: Date.now()});
-
-  promise.then(() => {
-    
-    const promise2 = db.collection("messages").insertOne({from:name, to:'Todos', text: 'entra na sala...', type: 'status', time:dayjs().format('HH:mm:ss')});
-
-    promise2.then((answer) => {
-      res.status(201); 
-      res.send(answer);
-    });
-
-    promise2.catch((e) => {
-      console.log(e);
-      res.send("Deu ruim");
-    });
-
-  });
-
-  promise.catch((e) => {
+    res.sendStatus(201);
+    mongoClient.close();
+  }catch (e) {
     console.log(e);
+
     res.send("Deu ruim");
-  });
+    mongoClient.close();
+  }
+
 })
 
-app.get("/participants", (req,res) => {
-  const promise = db.collection("users").find({}).toArray();
-
-  promise.then((participants) => {
+app.get("/participants", async (req,res) => {
+  try{
+    await mongoClient.connect();
+    const dbUol = mongoClient.db("batepapouol");
+    const usersCollection = dbUol.collection("users");
+    const participants = await usersCollection.find({}).toArray();
+    
     res.status(200).send(participants);
-  })
+    mongoClient.close();
+  }catch (e) {
+    console.log(e);
 
-  promise.catch((e) => {
-    console.log(chalk.bold.red("Não foi possível pegar a lista de participantes"), e);
-    res.sendStatus(404);
-  })
+    res.send("Deu ruim");
+    mongoClient.close();
+  }
 })
 
 app.listen(5000,()=>console.log(chalk.bold.green("Servidor rodando na porta 5000!")));
