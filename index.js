@@ -82,4 +82,73 @@ app.get("/participants", async (req,res) => {
   }
 })
 
+app.post("/messages", async (req, res) => { //Falta fazer a validação com joi verificando se um usuario ja existe no banco de dados. Ta caindo erro 500 ao inves de 422
+  const {to, text, type} = req.body;
+  const {user} = req.headers;
+
+  try{
+    await mongoClient.connect();
+    const dbUol = mongoClient.db("batepapouol");
+    const usersCollection = dbUol.collection("users");
+    const usersArray = await usersCollection.find({}).toArray();
+    const usernamesArray = usersArray.map(username => username.name)
+    const userFrom = await usernamesArray.find((username) => {
+      if(user === username){
+        return username
+      }
+    });
+
+    const schema = joi.object({
+      to: joi.string()
+      .required(),
+      text: joi.string()
+      .required(),
+      type: joi.string().valid('message', 'private_message'),
+      from: joi.any().valid(userFrom)
+    })
+    
+    const {error, value} = schema.validate({to: to, text: text, type: type, from: user} );
+    console.log(error)
+
+    if(error !== undefined){
+      console.log(error)
+      res.sendStatus(422);
+      return
+    }
+
+    const messagesCollection = dbUol.collection("messages");
+    await messagesCollection.insertOne({to: to, text: text, type: type, from: user, time: dayjs().format('HH:mm:ss')})
+    
+    res.sendStatus(201);
+    mongoClient.close();
+  }catch (e){
+    res.sendStatus(500);
+    mongoClient.close();
+  }
+})
+
+app.get('/messages', async (req, res) => {
+  const {limit} = req.query;
+
+  try{
+    await mongoClient.connect();
+    const dbUol = mongoClient.db('batepapouol');
+    const messagesCollection = dbUol.collection('messages');
+    const messagesArray = await messagesCollection.find({}).toArray();
+    
+    if(!limit){
+      res.status(200).send(messagesArray)
+      return
+    }
+
+    res.status(200).send(messagesArray.slice(-limit));
+
+    mongoClient.close();
+  }catch(e){
+    res.sendStatus(500);
+    mongoClient.close();
+  }
+
+})
+
 app.listen(5000,()=>console.log(chalk.bold.green("Servidor rodando na porta 5000!")));
