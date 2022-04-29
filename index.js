@@ -92,12 +92,10 @@ app.post("/messages", async (req, res) => { //Falta fazer a validação com joi 
     const usersCollection = dbUol.collection("users");
     const usersArray = await usersCollection.find({}).toArray();
     const usernamesArray = usersArray.map(username => username.name)
-    const userFrom = await usernamesArray.find((username) => {
-      if(user === username){
-        return username
-      }
+    let userFrom = await usernamesArray.filter((username) => {
+        return user === username
     });
-
+    userFrom = userFrom.toString()
     const schema = joi.object({
       to: joi.string()
       .required(),
@@ -108,10 +106,8 @@ app.post("/messages", async (req, res) => { //Falta fazer a validação com joi 
     })
     
     const {error, value} = schema.validate({to: to, text: text, type: type, from: user} );
-    console.log(error)
 
     if(error !== undefined){
-      console.log(error)
       res.sendStatus(422);
       return
     }
@@ -122,6 +118,8 @@ app.post("/messages", async (req, res) => { //Falta fazer a validação com joi 
     res.sendStatus(201);
     mongoClient.close();
   }catch (e){
+    console.log(e)
+
     res.sendStatus(500);
     mongoClient.close();
   }
@@ -129,19 +127,26 @@ app.post("/messages", async (req, res) => { //Falta fazer a validação com joi 
 
 app.get('/messages', async (req, res) => {
   const {limit} = req.query;
+  const {user} = req.headers;
 
   try{
     await mongoClient.connect();
     const dbUol = mongoClient.db('batepapouol');
     const messagesCollection = dbUol.collection('messages');
     const messagesArray = await messagesCollection.find({}).toArray();
+
+    const messagesForUser = messagesArray.filter((message) => {
+      if(message.type === 'message' || message.type === 'status' || message.to === user || message.from === user){
+        return message;
+      }
+    })
     
     if(!limit){
-      res.status(200).send(messagesArray)
+      res.status(200).send(messagesForUser)
       return
     }
 
-    res.status(200).send(messagesArray.slice(-limit));
+    res.status(200).send(messagesForUser.slice(-limit));
 
     mongoClient.close();
   }catch(e){
@@ -150,5 +155,54 @@ app.get('/messages', async (req, res) => {
   }
 
 })
+
+app.post('/status', async (req,res) => {
+  const {user} = req.headers;
+
+  try{
+    await mongoClient.connect();
+    const dbUol = mongoClient.db('batepapouol');
+    const usersCollection = dbUol.collection('users');
+
+    const selectedUser = await usersCollection.findOne({name: user});
+
+    if(!selectedUser){
+      res.sendStatus(404);
+      return
+    }
+
+    await usersCollection.updateOne({
+      name: selectedUser.name
+    }, 
+      {$set: {lastStatus: Date.now()}} )
+
+    res.sendStatus(200)
+  }catch (e){
+    res.sendStatus(500);
+
+    mongoClient.close();
+  }
+});
+
+// setInterval(async () => {
+//   try{
+//     mongoClient.connect();
+//     const dbUol = mongoClient.db('batepapouol');
+//     const usersCollection = dbUol.collection('users');
+//     const usersArray = await usersCollection.find({}).toArray();
+//     const usersExpired = usersArray.filter((user) => {
+//       return Date.now() - parseInt(user.lastStatus) > 10000;
+//     })
+    
+//     usersExpired.forEach((userData) => {
+//       usersCollection.deleteOne({_id: new Object(userData._id)});
+//     })
+//     console.log(usersExpired)
+//     mongoClient.close()
+//   }catch (e){
+//     console.log(e);
+//     mongoClient.close()
+//   }
+// }, 15000)
 
 app.listen(5000,()=>console.log(chalk.bold.green("Servidor rodando na porta 5000!")));
