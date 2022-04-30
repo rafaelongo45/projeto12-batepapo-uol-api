@@ -7,7 +7,16 @@ import express from "express"
 import { MongoClient, ObjectId } from "mongodb";
 
 dotenv.config();
+
+let dbUol;
 const mongoClient = new MongoClient(process.env.MONGO_URI);
+const promise = mongoClient.connect();
+
+promise.then(()=> {
+  dbUol = mongoClient.db(process.env.DATABASE);
+})
+
+promise.catch(e => console.log(chalk.bold.red('Não foi possível estabelecer a conexão com o servidor'), e));
 
 const app = express();
 app.use(express.json());
@@ -15,24 +24,21 @@ app.use(cors());
 
 app.post("/participants", async (req, res) => {
   const {name} = req.body;
+
   const schema = joi.object({
       username: joi.string()
       .required()
   });
 
-  const {error, value} = schema.validate({username: name});
+  const {error, value} = schema.validate({username: name}, {abortEarly: false});
   
   if(error !== undefined){
-    console.log(chalk.bold.red(error.details[0].message))
-    res.sendStatus(422);
+    res.status(422).send(error.details.map(message => message.message));
     return
   }
 
   try{
-    await mongoClient.connect();
-    const dbUol = mongoClient.db("batepapouol");
     const usersCollection = dbUol.collection("users");
-    
     const usersArray = await usersCollection.find({}).toArray();
     const usernamesArray  = usersArray.map(username => username.name)
 
@@ -46,7 +52,7 @@ app.post("/participants", async (req, res) => {
 
     if(alreadyLoggedIn){
       res.sendStatus(409);
-      console.log("Usuário já cadastrado")
+      console.log(chalk.bold.red("Usuário já cadastrado"));
       return
     }
 
@@ -55,82 +61,70 @@ app.post("/participants", async (req, res) => {
     await messagesCollection.insertOne({from:name, to:'Todos', text: 'entra na sala...', type: 'status', time:dayjs().format('HH:mm:ss')});
 
     res.sendStatus(201);
-    mongoClient.close();
   }catch (e) {
     console.log(e);
-
-    res.send("Deu ruim");
-    mongoClient.close();
+    res.send("Erro");
   }
 
 })
 
 app.get("/participants", async (req,res) => {
   try{
-    await mongoClient.connect();
     const dbUol = mongoClient.db("batepapouol");
     const usersCollection = dbUol.collection("users");
     const participants = await usersCollection.find({}).toArray();
-    
     res.status(200).send(participants);
-    mongoClient.close();
   }catch (e) {
     console.log(e);
-
-    res.send("Deu ruim");
-    mongoClient.close();
+    res.send("Erro");
   }
 })
 
-app.post("/messages", async (req, res) => { //Falta fazer a validação com joi verificando se um usuario ja existe no banco de dados. Ta caindo erro 500 ao inves de 422
+app.post("/messages", async (req, res) => {
   const {to, text, type} = req.body;
   const {user} = req.headers;
 
   try{
-    await mongoClient.connect();
     const dbUol = mongoClient.db("batepapouol");
     const usersCollection = dbUol.collection("users");
     const usersArray = await usersCollection.find({}).toArray();
     const usernamesArray = usersArray.map(username => username.name)
-    let userFrom = await usernamesArray.filter((username) => {
+    let userFrom = usernamesArray.filter((username) => {
         return user === username
     });
+
     userFrom = userFrom.toString()
+
     const schema = joi.object({
       to: joi.string()
       .required(),
       text: joi.string()
       .required(),
-      type: joi.string().valid('message', 'private_message'),
+      type: joi.string().valid('message', 'private_message').required(),
       from: joi.any().valid(userFrom)
     })
     
-    const {error, value} = schema.validate({to: to, text: text, type: type, from: user} );
+    const {error, value} = schema.validate({to: to, text: text, type: type, from: user}, {abortEarly: false} );
 
     if(error !== undefined){
-      res.sendStatus(422);
+      res.status(422).send(error.details.map(message => message.message));
       return
     }
 
     const messagesCollection = dbUol.collection("messages");
     await messagesCollection.insertOne({to: to, text: text, type: type, from: user, time: dayjs().format('HH:mm:ss')})
-    
     res.sendStatus(201);
-    mongoClient.close();
   }catch (e){
     console.log(e)
-
     res.sendStatus(500);
-    mongoClient.close();
   }
 })
 
-app.get('/messages', async (req, res) => {
+app.get('/messages', async (req, res) => {  
   const {limit} = req.query;
   const {user} = req.headers;
 
   try{
-    await mongoClient.connect();
     const dbUol = mongoClient.db('batepapouol');
     const messagesCollection = dbUol.collection('messages');
     const messagesArray = await messagesCollection.find({}).toArray();
@@ -147,11 +141,8 @@ app.get('/messages', async (req, res) => {
     }
 
     res.status(200).send(messagesForUser.slice(-limit));
-
-    mongoClient.close();
   }catch(e){
     res.sendStatus(500);
-    mongoClient.close();
   }
 
 })
@@ -160,7 +151,6 @@ app.post('/status', async (req,res) => {
   const {user} = req.headers;
 
   try{
-    await mongoClient.connect();
     const dbUol = mongoClient.db('batepapouol');
     const usersCollection = dbUol.collection('users');
 
@@ -179,30 +169,28 @@ app.post('/status', async (req,res) => {
     res.sendStatus(200)
   }catch (e){
     res.sendStatus(500);
-
-    mongoClient.close();
   }
 });
 
-// setInterval(async () => {
-//   try{
-//     mongoClient.connect();
-//     const dbUol = mongoClient.db('batepapouol');
-//     const usersCollection = dbUol.collection('users');
-//     const usersArray = await usersCollection.find({}).toArray();
-//     const usersExpired = usersArray.filter((user) => {
-//       return Date.now() - parseInt(user.lastStatus) > 10000;
-//     })
+setInterval(async () => {
+  try{
+    const dbUol = mongoClient.db('batepapouol');
+    const usersCollection = dbUol.collection('users');
+    const messagesCollection = dbUol.collection('messages');
+    const usersArray = await usersCollection.find({}).toArray();
+    const usersExpired = usersArray.filter((user) => {
+      return Date.now() - parseInt(user.lastStatus) > 10000;
+    })
+
+    usersExpired.forEach((user) => {
+      messagesCollection.insertOne({to: 'Todos', text: 'sai da sala...', type: 'status', from: user.name, time: dayjs().format('HH:mm:ss')});
+      usersCollection.deleteOne({_id: new ObjectId(user._id)});
+    })
     
-//     usersExpired.forEach((userData) => {
-//       usersCollection.deleteOne({_id: new Object(userData._id)});
-//     })
-//     console.log(usersExpired)
-//     mongoClient.close()
-//   }catch (e){
-//     console.log(e);
-//     mongoClient.close()
-//   }
-// }, 15000)
+    console.log(usersExpired)
+  }catch (e){
+    console.log(e);
+  }
+}, 15000)
 
 app.listen(5000,()=>console.log(chalk.bold.green("Servidor rodando na porta 5000!")));
