@@ -172,6 +172,34 @@ app.post('/status', async (req,res) => {
   }
 });
 
+app.delete("/messages/:id", async (req, res) => {
+  const {user} = req.headers;
+  const {id} = req.params;
+  try{
+    const dbUol = mongoClient.db('batepapouol');
+    const messagesCollection = dbUol.collection('messages');
+    const messagesArray = await messagesCollection.find({_id: new ObjectId(id)}).toArray();
+    
+    if(messagesArray.length === 0){
+      res.sendStatus(404);
+      return;
+    }
+
+    if(messagesArray[0].from !== user){
+      console.log(messagesArray)
+      res.sendStatus(401)
+      return
+    }
+
+    await messagesCollection.deleteOne({_id: new ObjectId(id)});
+    res.sendStatus(200);
+  } catch (e){
+    res.sendStatus(500);
+    console.log(e);
+  }
+
+});
+
 setInterval(async () => {
   try{
     const dbUol = mongoClient.db('batepapouol');
